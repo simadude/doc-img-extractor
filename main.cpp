@@ -9,6 +9,8 @@
 #include <FL/Fl_Progress.H>
 #include <cstdlib>
 #include <vector>
+#include <sys/stat.h>
+#include <dirent.h>
 
 bool support_DJVU = true;
 bool support_PDF = true;

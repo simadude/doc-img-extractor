@@ -6,6 +6,7 @@
 #include <FL/Fl_Text_Display.H>
 #include <FL/Fl_Button.H>
 #include <FL/Fl_Box.H>
+#include <FL/Fl_Progress.H>
 #include <cstdlib>
 #include <vector>
 
@@ -26,6 +27,8 @@ Fl_Button* b_input_files = nullptr;
 Fl_Box* b_input_files_count = nullptr;
 Fl_Button* b_output_dir = nullptr;
 Fl_Box* b_output_dir_label = nullptr;
+Fl_Progress* progress_bar = nullptr; // New: Progress bar
+Fl_Button* startb = nullptr; // New: Start button
 
 std::string input_files_count_str;
 std::vector<std::string> input_files_vec; 
@@ -319,6 +322,13 @@ static void start_cb (Fl_Widget* o) {
     }
     b_input_files->deactivate();
     b_output_dir->deactivate();
+    startb->deactivate(); // New: Deactivate start button
+    progress_bar->show(); // New: Show progress bar
+    progress_bar->value(0); // New: Reset progress bar
+
+    float progress_step = 100.0f / input_files_vec.size(); // New: Calculate progress step
+    int files_processed = 0; // New: Counter for processed files
+
     // Step 2 + 3: check if we support the file in the vector and process it.
     for (const auto& path : input_files_vec) {
         std::string ftype = detect_file_type(path);
@@ -332,9 +342,14 @@ static void start_cb (Fl_Widget* o) {
             continue;
         }
         process_document(path, output_dir_str);
+        files_processed++; // New: Increment processed files
+        progress_bar->value(files_processed * progress_step); // New: Update progress bar
+        Fl::check(); // New: Process FLTK events to update GUI
     }
     b_input_files->activate();
     b_output_dir->activate();
+    startb->activate(); // New: Activate start button
+    progress_bar->hide(); // New: Hide progress bar
 }
 
 
@@ -371,8 +386,14 @@ int main(int argc, char **argv) {
         Fl_Button* quitb = new Fl_Button(512-74, 256-42, 64, 32, "Exit");
         quitb->callback(quit_cb);
 
-        Fl_Button* startb = new Fl_Button(512-74, 10, 64, 32, "Start");
+        startb = new Fl_Button(512-74, 10, 64, 32, "Start");
         startb->callback(start_cb);
+
+        progress_bar = new Fl_Progress(10, 220, 492, 24); // New: Progress bar
+        progress_bar->minimum(0);
+        progress_bar->maximum(100);
+        progress_bar->value(0);
+        progress_bar->hide();
     }
     wmain->end();
 

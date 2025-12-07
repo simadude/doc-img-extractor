@@ -319,10 +319,9 @@ static void start_cb (Fl_Widget* o) {
     if ((input_files_vec.size() == 0) | (output_dir_str.empty())) {
         return;
     }
-    // Step 2: check if we support all the files in the vector
     b_input_files->deactivate();
     b_output_dir->deactivate();
-    // Step 3: start extracting images
+    // Step 2 + 3: check if we support the file in the vector and process it.
     for (const auto& path : input_files_vec) {
         std::string ftype = detect_file_type(path);
         bool supported = false;
@@ -336,6 +335,8 @@ static void start_cb (Fl_Widget* o) {
         }
         process_document(path, output_dir_str);
     }
+    b_input_files->activate();
+    b_output_dir->activate();
 }
 
 

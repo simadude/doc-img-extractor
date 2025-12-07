@@ -240,15 +240,9 @@ void extract_djvu_images(const std::string& filepath, const std::string& output_
         return;
     }
     std::cout << "   -> Rendering " << pages << " pages sequentially..." << std::endl;
-    for (int page = 1; page <= pages; ++page) {
-        char out_tiff[256];
-        snprintf(out_tiff, sizeof(out_tiff), "%s/page_%04d.tiff", output_folder.c_str(), page);
-        std::string cmd = "ddjvu -format=tiff -page=" + std::to_string(page) + " '" + filepath + "' '" + out_tiff + "' > /dev/null 2>&1";
-        system(cmd.c_str());
-        if (page % 10 == 0 || page == pages) {
-            std::cout << "      -> Rendered " << page << "/" << pages << std::endl;
-        }
-    }
+    std::string cmd = "ddjvu -format=tiff -eachpage '" + filepath + "' '" + output_folder + "/page_%04d.tiff' > /dev/null 2>&1";
+    system(cmd.c_str());
+    std::cout << "      -> Rendered all " << pages << " pages." << std::endl;
 }
 
 void extract_zip_container(const std::string& filepath, const std::string& output_folder) {

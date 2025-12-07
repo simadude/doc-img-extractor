@@ -187,7 +187,6 @@ static void output_dir_cb(Fl_Widget* o) {
 // 1. Simple File Type Detection via 'file' command
 // ==========================================
 std::string detect_file_type(const std::string& filepath) {
-    // Use 'file' command for MIME detection
     std::string mime;
     std::string cmd = "file --brief --mime-type '" + filepath + "'";
     FILE* pipe = popen(cmd.c_str(), "r");
@@ -199,13 +198,17 @@ std::string detect_file_type(const std::string& filepath) {
         }
         pclose(pipe);
     }
+
     if (mime == "application/pdf") return "pdf";
     if (mime == "image/vnd.djvu" || mime.find("djvu") != std::string::npos) return "djvu";
-    if (mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-        mime == "application/epub+zip" || mime == "application/zip") {
-        if (mime.find("wordprocessingml.document") != std::string::npos) return "docx";
-        else return "zip_container";
+
+    if (mime.find("opendocument") != std::string::npos ||    // .odt .ods .odp etc.
+        mime.find("openxmlformats") != std::string::npos ||  // .docx .xlsx .pptx
+        mime == "application/epub+zip" ||
+        mime == "application/zip") {
+        return "zip_container";
     }
+    
     if (mime == "application/msword") return "doc_legacy";
     return "unknown";
 }

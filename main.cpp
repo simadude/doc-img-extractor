@@ -214,7 +214,7 @@ std::string detect_file_type(const std::string& filepath) {
 // 2. Extraction Using System Tools Only
 // ==========================================
 void extract_pdf_images(const std::string& filepath, const std::string& output_folder) {
-    std::cout << "[PDF] Extracting images from " << filepath << "..." << std::endl;
+    // std::cout << "[PDF] Extracting images from " << filepath << "..." << std::endl;
     mkdir(output_folder.c_str(), 0777);
     std::string prefix = output_folder + "/img";
     std::string cmd = "pdfimages -all '" + filepath + "' '" + prefix + "' > /dev/null 2>&1";
@@ -222,7 +222,7 @@ void extract_pdf_images(const std::string& filepath, const std::string& output_f
 }
 
 void extract_djvu_images(const std::string& filepath, const std::string& output_folder) {
-    std::cout << "[DJVU] Rendering pages from " << filepath << "..." << std::endl;
+    // std::cout << "[DJVU] Rendering pages from " << filepath << "..." << std::endl;
     mkdir(output_folder.c_str(), 0777);
     // Get page count
     int pages = 0;
@@ -238,24 +238,24 @@ void extract_djvu_images(const std::string& filepath, const std::string& output_
         }
     }
     if (pages <= 0) {
-        std::cout << "   -> Failed to get page count (djvused missing?)" << std::endl;
+        // std::cout << "   -> Failed to get page count (djvused missing?)" << std::endl;
         return;
     }
-    std::cout << "   -> Rendering " << pages << " pages sequentially..." << std::endl;
+    // std::cout << "   -> Rendering " << pages << " pages sequentially..." << std::endl;
     std::string cmd = "ddjvu -format=tiff -eachpage '" + filepath + "' '" + output_folder + "/page_%04d.tiff' > /dev/null 2>&1";
     system(cmd.c_str());
-    std::cout << "      -> Rendered all " << pages << " pages." << std::endl;
+    // std::cout << "      -> Rendered all " << pages << " pages." << std::endl;
 }
 
 void extract_zip_container(const std::string& filepath, const std::string& output_folder) {
-    std::cout << "[ZIP/DOCX/EPUB] Extracting media from " << filepath << "..." << std::endl;
+    // std::cout << "[ZIP/DOCX/EPUB] Extracting media from " << filepath << "..." << std::endl;
     mkdir(output_folder.c_str(), 0777);
     std::string cmd = "unzip -j -o '" + filepath + "' '*.[pP][nN][gG]' '*.[jJ][pP][gG]' '*.[jJ][pP][eE][gG]' '*.[gG][iI][fF]' '*.[bB][mM][pP]' '*.[tT][iI][fF]*' '*.[sS][vV][gG]' '*.[wW][mM][fF]' '*.[eE][mM][fF]' -x '*/thumbnail*' -d '" + output_folder + "' > /dev/null 2>&1";
     system(cmd.c_str());
 }
 
 void convert_and_extract_legacy_doc(const std::string& filepath, const std::string& output_folder) {
-    std::cout << "[DOC] Converting legacy .doc -> .docx -> extract..." << std::endl;
+    // std::cout << "[DOC] Converting legacy .doc -> .docx -> extract..." << std::endl;
     std::string temp_dir = output_folder + "/_temp_doc";
     mkdir(temp_dir.c_str(), 0777);
     std::string cmd = "soffice --headless --convert-to docx --outdir '" + temp_dir + "' '" + filepath + "' > /dev/null 2>&1";
@@ -277,7 +277,7 @@ void convert_and_extract_legacy_doc(const std::string& filepath, const std::stri
     if (!docx_found.empty()) {
         extract_zip_container(docx_found, output_folder);
     } else {
-        std::cout << "   -> Conversion failed: no .docx produced" << std::endl;
+        // std::cout << "   -> Conversion failed: no .docx produced" << std::endl;
     }
     std::string rm_cmd = "rm -rf '" + temp_dir + "'";
     system(rm_cmd.c_str());
@@ -289,7 +289,7 @@ void convert_and_extract_legacy_doc(const std::string& filepath, const std::stri
 void process_document(const std::string& filepath, const std::string& output_root) {
     struct stat st;
     if (stat(filepath.c_str(), &st) != 0) {
-        std::cout << "File not found: " << filepath << std::endl;
+        // std::cout << "File not found: " << filepath << std::endl;
         return;
     }
     std::string ftype = detect_file_type(filepath);
@@ -297,7 +297,7 @@ void process_document(const std::string& filepath, const std::string& output_roo
     size_t dot = basename.find_last_of('.');
     if (dot != std::string::npos) basename = basename.substr(0, dot);
     std::string target_folder = output_root + "/" + basename;
-    std::cout << "\nProcessing: " << filepath << " -> " << ftype << std::endl;
+    // std::cout << "\nProcessing: " << filepath << " -> " << ftype << std::endl;
     if (ftype == "pdf") {
         extract_pdf_images(filepath, target_folder);
     } else if (ftype == "djvu") {
@@ -307,7 +307,7 @@ void process_document(const std::string& filepath, const std::string& output_roo
     } else if (ftype == "doc_legacy") {
         convert_and_extract_legacy_doc(filepath, target_folder);
     } else {
-        std::cout << "   -> Unsupported or unknown type: " << ftype << std::endl;
+        // std::cout << "   -> Unsupported or unknown type: " << ftype << std::endl;
     }
 }
 
@@ -334,7 +334,7 @@ static void start_cb (Fl_Widget* o) {
         else if ((ftype == "docx" || ftype == "doc_legacy") && support_DOC) supported = true;
         else if ((ftype == "zip_container" || ftype == "epub") && support_EPUB) supported = true;
         if (!supported) {
-            std::cout << "Skipping unsupported file: " << path << " (type: " << ftype << ")" << std::endl;
+            // std::cout << "Skipping unsupported file: " << path << " (type: " << ftype << ")" << std::endl;
             continue;
         }
         process_document(path, output_dir_str);

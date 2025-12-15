@@ -7,7 +7,9 @@
 #include <FL/Fl_Button.H>
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Progress.H>
-#include <cstdlib>
+#include <cstdio>
+#include <cstdlib> 
+#include <unistd.h> 
 #include <vector>
 #include <sys/stat.h>
 #include <dirent.h>
@@ -32,9 +34,19 @@ Fl_Box* b_output_dir_label = nullptr;
 Fl_Progress* progress_bar = nullptr;
 Fl_Button* startb = nullptr;
 
+Fl_Box* status_box = nullptr;
+
 std::string input_files_count_str;
 std::vector<std::string> input_files_vec; 
 std::string output_dir_str;
+
+// Callback to clear the status message after 4 seconds
+static void clear_status_cb(void*) {
+    if (status_box) {
+        status_box->label("");
+        status_box->redraw();
+    }
+}
 
 int call(std::string c) {
     std::string buffer;
@@ -225,12 +237,12 @@ void extract_pdf_images(const std::string& filepath, const std::string& output_f
 }
 
 void extract_djvu_images(const std::string& filepath, const std::string& output_folder) {
-    // std::cout << "[DJVU] Rendering pages from " << filepath << "..." << std::endl;
     mkdir(output_folder.c_str(), 0777);
-    // Get page count
+
+    // Get page count using djvused
     int pages = 0;
     {
-        std::string cmd = "djvused -e n '" + filepath + "'";
+        std::string cmd = "djvused -e 'n' '" + filepath + "' 2>/dev/null";
         FILE* pipe = popen(cmd.c_str(), "r");
         if (pipe) {
             char buffer[32];
@@ -240,14 +252,61 @@ void extract_djvu_images(const std::string& filepath, const std::string& output_
             pclose(pipe);
         }
     }
+
     if (pages <= 0) {
-        // std::cout << "   -> Failed to get page count (djvused missing?)" << std::endl;
+        // std::cout << "Could not determine page count for " << filepath << std::endl;
         return;
     }
-    // std::cout << "   -> Rendering " << pages << " pages sequentially..." << std::endl;
-    std::string cmd = "ddjvu -format=tiff -eachpage '" + filepath + "' '" + output_folder + "/page_%04d.tiff' > /dev/null 2>&1";
-    system(cmd.c_str());
-    // std::cout << "      -> Rendered all " << pages << " pages." << std::endl;
+
+    // Temporary directory for extraction
+    std::string temp_dir = output_folder + "/_djvu_temp";
+    mkdir(temp_dir.c_str(), 0777);
+
+    const int SIZE_THRESHOLD = 200;  // bytes - adjust if needed (128–1024 are common safe values)
+    int extracted_count = 0;
+
+    for (int page = 1; page <= pages; ++page) {
+        std::string iw44_file = temp_dir + "/page_" + std::to_string(page) + ".iw44";
+
+        // Step 1: Extract only background layer (BG44) for this page
+        std::string extract_cmd = "djvuextract '" + filepath + "' BG44='" + iw44_file + "' -page=" + std::to_string(page) + " > /dev/null 2>&1";
+        int ret = system(extract_cmd.c_str());
+
+        if (ret != 0) {
+            // Page might not have BG44 or djvuextract returns error → skip
+            continue;
+        }
+
+        // Step 2: Check file size
+        struct stat st;
+        if (stat(iw44_file.c_str(), &st) != 0 || st.st_size <= SIZE_THRESHOLD) {
+            // Too small → blank page
+            unlink(iw44_file.c_str());  // clean up
+            continue;
+        }
+
+        // Step 3: Real content → render full page as TIFF using ddjvu
+        std::string output_tiff = output_folder + "/page_" + std::string(4 - std::to_string(extracted_count + 1).length(), '0') + std::to_string(extracted_count + 1) + ".tiff";
+
+        std::string render_cmd = "ddjvu -format=tiff -page=" + std::to_string(page) + " '" + filepath + "' '" + output_tiff + "' > /dev/null 2>&1";
+        system(render_cmd.c_str());
+
+        if (stat(output_tiff.c_str(), &st) == 0 && st.st_size > 1000) {  // basic sanity check
+            extracted_count++;
+        }
+
+        // Clean up temp IW44 file
+        unlink(iw44_file.c_str());
+    }
+
+    // Clean up temp directory
+    std::string rmdir_cmd = "rm -rf '" + temp_dir + "'";
+    system(rmdir_cmd.c_str());
+
+    // Optional: if nothing was extracted, you can leave a note or remove empty folder
+    if (extracted_count == 0) {
+        rmdir(output_folder.c_str());
+    }
 }
 
 void extract_zip_container(const std::string& filepath, const std::string& output_folder) {
@@ -316,7 +375,28 @@ void process_document(const std::string& filepath, const std::string& output_roo
 
 static void start_cb (Fl_Widget* o) {
     // Step 1: check if we have files and output path
-    if ((input_files_vec.size() == 0) | (output_dir_str.empty())) {
+    if (input_files_vec.size() == 0) {
+        if (status_box) {
+            status_box->label("Input files are not chosen!");
+            // status_box->color(FL_GREEN);
+            status_box->labelcolor(FL_RED);
+            status_box->redraw();
+
+            // Schedule clearing the message after 4 seconds
+            Fl::add_timeout(4.0, clear_status_cb);
+        }
+        return;
+    }
+    if (output_dir_str.empty()) {
+        if (status_box) {
+            status_box->label("Output folder is not chosen!");
+            // status_box->color(FL_GREEN);
+            status_box->labelcolor(FL_RED);
+            status_box->redraw();
+
+            // Schedule clearing the message after 4 seconds
+            Fl::add_timeout(4.0, clear_status_cb);
+        }
         return;
     }
     b_input_files->deactivate();
@@ -324,6 +404,12 @@ static void start_cb (Fl_Widget* o) {
     startb->deactivate();
     progress_bar->show();
     progress_bar->value(0);
+
+    // Clear any previous status message
+    if (status_box) {
+        status_box->label("");
+        status_box->redraw();
+    }
 
     float progress_step = 100.0f / input_files_vec.size();
     int files_processed = 0;
@@ -337,7 +423,6 @@ static void start_cb (Fl_Widget* o) {
         else if ((ftype == "docx" || ftype == "doc_legacy") && support_DOC) supported = true;
         else if ((ftype == "zip_container" || ftype == "epub") && support_EPUB) supported = true;
         if (!supported) {
-            // std::cout << "Skipping unsupported file: " << path << " (type: " << ftype << ")" << std::endl;
             continue;
         }
         process_document(path, output_dir_str);
@@ -345,10 +430,22 @@ static void start_cb (Fl_Widget* o) {
         progress_bar->value(files_processed * progress_step);
         Fl::check();
     }
+
+    progress_bar->hide();
+
+    if (status_box) {
+        status_box->label("Extraction completed!");
+        // status_box->color(FL_GREEN);
+        status_box->labelcolor(FL_GREEN);
+        status_box->redraw();
+
+        // Schedule clearing the message after 4 seconds
+        Fl::add_timeout(4.0, clear_status_cb);
+    }
+
     b_input_files->activate();
     b_output_dir->activate();
     startb->activate();
-    progress_bar->hide();
 }
 
 
@@ -371,7 +468,8 @@ int main(int argc, char **argv) {
     }
     wstart->end();
 
-    wmain = new Fl_Double_Window(512, 256);
+    wmain = new Fl_Double_Window(512, 300);  // Slightly taller to make room for status box
+
     {
         new Fl_Box(50, 20, 200, 10, "Choose documents to extract images from.");
         b_input_files = new Fl_Button(10, 40, 128, 32, "Choose");
@@ -382,17 +480,23 @@ int main(int argc, char **argv) {
         b_output_dir->callback(output_dir_cb);
         b_output_dir_label = new Fl_Box(148, 112, 356, 24);
 
-        Fl_Button* quitb = new Fl_Button(512-74, 256-42, 64, 32, "Exit");
+        Fl_Button* quitb = new Fl_Button(512-74, 300-42, 64, 32, "Exit");
         quitb->callback(quit_cb);
 
         startb = new Fl_Button(512-74, 10, 64, 32, "Start");
         startb->callback(start_cb);
 
-        progress_bar = new Fl_Progress(10, 200, 492, 24);
+        progress_bar = new Fl_Progress(10, 240, 492, 24);
         progress_bar->minimum(0);
         progress_bar->maximum(100);
         progress_bar->value(0);
         progress_bar->hide();
+
+        // === NEW: Status box above progress bar / exit button ===
+        status_box = new Fl_Box(10, 210, 492, 24, "");
+        status_box->align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
+        status_box->labelfont(FL_BOLD);
+        status_box->labelsize(16);
     }
     wmain->end();
 

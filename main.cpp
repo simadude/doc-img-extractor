@@ -36,6 +36,9 @@ bool support_EPUB = true;
 bool support_OPENCV = false;
 bool support_TESSERACT = false;
 
+// ==========================================
+// Global UI Pointers
+// ==========================================
 Fl_Double_Window* wstart = nullptr;
 Fl_Text_Display* l = nullptr;
 Fl_Button* bc = nullptr;
@@ -58,6 +61,13 @@ Fl_Box* status_box = nullptr;
 std::string input_files_count_str;
 std::vector<std::string> input_files_vec;
 std::string output_dir_str;
+
+// ==========================================
+// Global Progress State
+// ==========================================
+int g_total_work_units = 0;
+int g_processed_work_units = 0;
+int g_current_file_index = 0;
 
 static void clear_status_cb(void*) {
     if (status_box) {
@@ -317,7 +327,6 @@ std::vector<cv::Rect> extractFigures(const cv::Mat& image, tesseract::TessBaseAP
         if (area < minArea || area > maxArea) continue;
         if (bbox.width < 100 || bbox.height < 100) continue;
         
-        // FIXED: Safe boundary clamping
         int padX = (int)(bbox.width * 0.05);
         int padY = (int)(bbox.height * 0.05);
 
@@ -433,6 +442,19 @@ void process_extracted_images_with_opencv(const std::string& folder_path, bool u
             std::string output_path = opencv_folder + "/" + base_name + "_figure_" + std::to_string(i+1) + ".png";
             cv::imwrite(output_path, figure);
         }
+        
+        // Update Progress for OpenCV processing step
+        g_processed_work_units++;
+        if (progress_bar) {
+            float pct = (float)g_processed_work_units / g_total_work_units * 100.0f;
+            progress_bar->value(pct);
+        }
+        if (status_box) {
+            // FIXED: Use copy_label (safer for literals too)
+            status_box->copy_label("Processing image content with OpenCV...");
+            status_box->redraw();
+        }
+        Fl::check();
     }
 
     if (tess) {
@@ -442,32 +464,87 @@ void process_extracted_images_with_opencv(const std::string& folder_path, bool u
 }
 
 // ==========================================
-// Rendering & Extraction Functions
+// Helper: Get Page Count
 // ==========================================
-
-void render_pdf_pages(const std::string& filepath, const std::string& output_folder) {
-    mkdir(output_folder.c_str(), 0777);
-    std::string prefix = output_folder + "/page";
-    std::string cmd = "pdftoppm -png -r 200 '" + filepath + "' '" + prefix + "' > /dev/null 2>&1";
-    system(cmd.c_str());
-}
-
-void render_djvu_pages(const std::string& filepath, const std::string& output_folder) {
-    mkdir(output_folder.c_str(), 0777);
-
-    int pages = 0;
-    {
-        std::string cmd = "djvused -e 'n' '" + filepath + "' 2>/dev/null";
+int get_page_count(const std::string& filepath, const std::string& ftype) {
+    if (ftype == "pdf") {
+        // Try pdfinfo first
+        std::string cmd = "pdfinfo \"" + filepath + "\" 2>/dev/null | grep Pages | awk '{print $2}'";
         FILE* pipe = popen(cmd.c_str(), "r");
         if (pipe) {
             char buffer[32];
             if (fgets(buffer, sizeof(buffer), pipe)) {
-                pages = atoi(buffer);
+                int p = atoi(buffer);
+                pclose(pipe);
+                if (p > 0) return p;
             }
             pclose(pipe);
         }
+        return 1; // Fallback
     }
+    else if (ftype == "djvu") {
+        std::string cmd = "djvused -e 'n' \"" + filepath + "\" 2>/dev/null";
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (pipe) {
+            char buffer[32];
+            if (fgets(buffer, sizeof(buffer), pipe)) {
+                int p = atoi(buffer);
+                pclose(pipe);
+                if (p > 0) return p;
+            }
+            pclose(pipe);
+        }
+        return 1;
+    }
+    return 1; // Default for other types
+}
 
+// ==========================================
+// Rendering & Extraction Functions
+// ==========================================
+
+void render_pdf_pages(const std::string& filepath, const std::string& output_folder, const std::string& filename_display) {
+    mkdir(output_folder.c_str(), 0777);
+    std::string prefix = output_folder + "/page";
+    
+    // We need to know how many pages we have to loop properly
+    // Assuming we called get_page_count before this. 
+    // However, to be robust, we can run pdftoppm until it fails or fetch count again.
+    // For performance, let's fetch count again locally or assume it's passed in context?
+    // To keep signature simple, let's query here. It's fast.
+    
+    int pages = get_page_count(filepath, "pdf");
+    
+    for (int page = 1; page <= pages; ++page) {
+        std::stringstream ss;
+        ss << std::setw(4) << std::setfill('0') << page;
+        
+        // Render single page
+        std::string cmd = "pdftoppm -f " + std::to_string(page) + " -l " + std::to_string(page) + 
+                          " -png -r 200 \"" + filepath + "\" \"" + prefix + "\" > /dev/null 2>&1";
+        system(cmd.c_str());
+
+        // Update Progress
+        g_processed_work_units++;
+        if (progress_bar) {
+            float pct = (float)g_processed_work_units / g_total_work_units * 100.0f;
+            progress_bar->value(pct);
+        }
+        if (status_box) {
+             std::string status = "File " + std::to_string(g_current_file_index + 1) + "/" + std::to_string((int)input_files_vec.size()) + 
+                                 " (" + filename_display + "): Rendering page " + std::to_string(page) + "/" + std::to_string(pages);
+             // FIXED: Use copy_label
+             status_box->copy_label(status.c_str());
+             status_box->redraw();
+        }
+        Fl::check();
+    }
+}
+
+void render_djvu_pages(const std::string& filepath, const std::string& output_folder, const std::string& filename_display) {
+    mkdir(output_folder.c_str(), 0777);
+
+    int pages = get_page_count(filepath, "djvu");
     if (pages <= 0) return;
 
     for (int page = 1; page <= pages; ++page) {
@@ -476,8 +553,23 @@ void render_djvu_pages(const std::string& filepath, const std::string& output_fo
         std::string padded = ss.str();
 
         std::string output_png = output_folder + "/page_" + padded + ".png";
-        std::string render_cmd = "ddjvu -format=png -page=" + std::to_string(page) + " '" + filepath + "' '" + output_png + "' > /dev/null 2>&1";
+        std::string render_cmd = "ddjvu -format=png -page=" + std::to_string(page) + " \"" + filepath + "\" \"" + output_png + "\" > /dev/null 2>&1";
         system(render_cmd.c_str());
+
+        // Update Progress
+        g_processed_work_units++;
+        if (progress_bar) {
+            float pct = (float)g_processed_work_units / g_total_work_units * 100.0f;
+            progress_bar->value(pct);
+        }
+        if (status_box) {
+             std::string status = "File " + std::to_string(g_current_file_index + 1) + "/" + std::to_string((int)input_files_vec.size()) + 
+                                 " (" + filename_display + "): Rendering page " + std::to_string(page) + "/" + std::to_string(pages);
+             // FIXED: Use copy_label
+             status_box->copy_label(status.c_str());
+             status_box->redraw();
+        }
+        Fl::check();
     }
 }
 
@@ -486,24 +578,20 @@ void extract_pdf_images(const std::string& filepath, const std::string& output_f
     std::string prefix = output_folder + "/img";
     std::string cmd = "pdfimages -all '" + filepath + "' '" + prefix + "' > /dev/null 2>&1";
     system(cmd.c_str());
+    
+    // Update progress for extraction step (1 unit)
+    g_processed_work_units++;
+    if(progress_bar) {
+         float pct = (float)g_processed_work_units / g_total_work_units * 100.0f;
+         progress_bar->value(pct);
+         Fl::check();
+    }
 }
 
 void extract_djvu_images(const std::string& filepath, const std::string& output_folder) {
     mkdir(output_folder.c_str(), 0777);
 
-    int pages = 0;
-    {
-        std::string cmd = "djvused -e 'n' '" + filepath + "' 2>/dev/null";
-        FILE* pipe = popen(cmd.c_str(), "r");
-        if (pipe) {
-            char buffer[32];
-            if (fgets(buffer, sizeof(buffer), pipe)) {
-                pages = atoi(buffer);
-            }
-            pclose(pipe);
-        }
-    }
-
+    int pages = get_page_count(filepath, "djvu");
     if (pages <= 0) return;
 
     std::string temp_dir = output_folder + "/_djvu_temp";
@@ -533,6 +621,14 @@ void extract_djvu_images(const std::string& filepath, const std::string& output_
             extracted_count++;
         }
         unlink(iw44_file.c_str());
+        
+        // Update progress for multi-step extraction
+        g_processed_work_units++;
+        if(progress_bar) {
+             float pct = (float)g_processed_work_units / g_total_work_units * 100.0f;
+             progress_bar->value(pct);
+             Fl::check();
+        }
     }
 
     std::string rmdir_cmd = "rm -rf '" + temp_dir + "'";
@@ -544,6 +640,14 @@ void extract_zip_container(const std::string& filepath, const std::string& outpu
     mkdir(output_folder.c_str(), 0777);
     std::string cmd = "unzip -j -o '" + filepath + "' '*.[pP][nN][gG]' '*.[jJ][pP][gG]' '*.[jJ][pP][eE][gG]' '*.[gG][iI][fF]' '*.[bB][mM][pP]' '*.[tT][iI][fF]*' '*.[sS][vV][gG]' '*.[wW][mM][fF]' '*.[eE][mM][fF]' -x '*/thumbnail*' -d '" + output_folder + "' > /dev/null 2>&1";
     system(cmd.c_str());
+    
+    // Update progress
+    g_processed_work_units++;
+    if(progress_bar) {
+         float pct = (float)g_processed_work_units / g_total_work_units * 100.0f;
+         progress_bar->value(pct);
+         Fl::check();
+    }
 }
 
 void convert_and_extract_legacy_doc(const std::string& filepath, const std::string& output_folder) {
@@ -613,16 +717,24 @@ void process_document(const std::string& filepath, const std::string& output_roo
 
     if (use_opencv) {
         if (ftype == "pdf" && support_PDF_RENDER) {
-            render_pdf_pages(filepath, target_folder);
+            render_pdf_pages(filepath, target_folder, basename);
             pages_rendered = true;
         }
         else if (ftype == "djvu" && support_DJVU) {
-            render_djvu_pages(filepath, target_folder);
+            render_djvu_pages(filepath, target_folder, basename);
             pages_rendered = true;
         }
-        else if ((support_DOC || support_EPUB) && support_PDF_RENDER) {  // Try LibreOffice → PDF → render
+        else if ((support_DOC || support_EPUB) && support_PDF_RENDER) {
+            // LibreOffice conversion is one block op
             std::string temp_dir = target_folder + "/_temp_pdf_convert";
             mkdir(temp_dir.c_str(), 0777);
+
+            // Update progress for conversion step
+            if (status_box) {
+                status_box->label("Converting document to PDF...");
+                status_box->redraw();
+            }
+            Fl::check();
 
             std::string convert_cmd = "soffice --headless --convert-to pdf --outdir '" + temp_dir + "' '" + filepath + "' > /dev/null 2>&1";
             system(convert_cmd.c_str());
@@ -642,7 +754,7 @@ void process_document(const std::string& filepath, const std::string& output_roo
             }
 
             if (!converted_pdf.empty() && stat(converted_pdf.c_str(), &st) == 0 && st.st_size > 1000) {
-                render_pdf_pages(converted_pdf, target_folder);
+                render_pdf_pages(converted_pdf, target_folder, basename);
                 pages_rendered = true;
                 unlink(converted_pdf.c_str());
             }
@@ -755,15 +867,68 @@ static void start_cb (Fl_Widget* o) {
     progress_bar->value(0);
 
     if (status_box) {
-        status_box->label("");
+        status_box->label("Calculating workload...");
+        status_box->labelcolor(FL_FOREGROUND_COLOR);
         status_box->redraw();
     }
+    Fl::check();
 
-    float progress_step = 100.0f / input_files_vec.size();
-    int files_processed = 0;
-
+    // ==========================================
+    // Step 1: Calculate Total Work Units
+    // ==========================================
+    g_total_work_units = 0;
+    g_processed_work_units = 0;
+    
+    if (status_box) {
+        // FIXED: Use copy_label
+        status_box->copy_label("Calculating workload...");
+        status_box->labelcolor(FL_FOREGROUND_COLOR);
+        status_box->redraw();
+    }
+    Fl::check();
+    
     for (const auto& path : input_files_vec) {
         std::string ftype = detect_file_type(path);
+        int pages = 1;
+        
+        if (ftype == "pdf" || ftype == "djvu") {
+            pages = get_page_count(path, ftype);
+        }
+        
+        if (use_opencv) {
+            if ((ftype == "pdf" && support_PDF_RENDER) || 
+                (ftype == "djvu" && support_DJVU) ||
+                ((support_DOC || support_EPUB) && support_PDF_RENDER)) {
+                // Cost = Render Pages + Process Pages
+                g_total_work_units += pages * 2; 
+            } else {
+                // Extraction (1 unit) + Processing (assume 5 images average)
+                g_total_work_units += 6; 
+            }
+        } else {
+            // No OpenCV
+            if (ftype == "pdf") {
+                // Extract (1 unit)
+                g_total_work_units += 1; 
+            } else if (ftype == "djvu") {
+                // Extract images is per page in original code logic
+                 g_total_work_units += pages;
+            } else {
+                g_total_work_units += 1;
+            }
+        }
+    }
+    
+    if (g_total_work_units == 0) g_total_work_units = 1; // Prevent div by zero
+
+    // ==========================================
+    // Step 2: Process Files
+    // ==========================================
+    for (size_t i = 0; i < input_files_vec.size(); i++) {
+        g_current_file_index = (int)i;
+        const std::string& path = input_files_vec[i];
+        std::string ftype = detect_file_type(path);
+        
         bool supported = false;
         if (ftype == "pdf" && support_PDF) supported = true;
         else if (ftype == "djvu" && support_DJVU) supported = true;
@@ -772,8 +937,10 @@ static void start_cb (Fl_Widget* o) {
         
         if (supported) {
             process_document(path, output_dir_str, use_opencv, use_tesseract);
-            files_processed++;
-            progress_bar->value(files_processed * progress_step);
+        } else {
+            // Just advance progress for unsupported files
+            g_processed_work_units++;
+            progress_bar->value((float)g_processed_work_units / g_total_work_units * 100.0f);
             Fl::check();
         }
     }

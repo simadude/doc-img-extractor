@@ -594,8 +594,9 @@ void render_single_djvu_page(const std::string& filepath, int page, const std::s
     ss << std::setw(4) << std::setfill('0') << page;
     std::string padded = ss.str();
 
-    std::string output_png = output_folder + "/page_" + padded + ".png";
-    std::string render_cmd = "ddjvu -format=png -page=" + std::to_string(page) + " \"" + filepath + "\" \"" + output_png + "\" > /dev/null 2>&1";
+    // FIX: ddjvu does not support PNG output. Changed to TIFF.
+    std::string output_tif = output_folder + "/page_" + padded + ".tif";
+    std::string render_cmd = "ddjvu -format=tiff -page=" + std::to_string(page) + " \"" + filepath + "\" \"" + output_tif + "\" > /dev/null 2>&1";
     system(render_cmd.c_str());
     
     g_processed_work_units++;
@@ -687,13 +688,14 @@ void extract_djvu_images(const std::string& filepath, const std::string& output_
                 }
 
                 // FIX: Use 'page' for filename to ensure uniqueness without locking a counter
+                // FIX: ddjvu does not support PNG. Changed to TIFF.
                 std::string page_num = std::to_string(page);
                 std::string padded = std::string(4 - page_num.length(), '0') + page_num;
-                std::string output_png = output_folder + "/page_" + padded + ".png";
-                std::string render_cmd = "ddjvu -format=png -page=" + std::to_string(page) + " '" + filepath + "' '" + output_png + "' > /dev/null 2>&1";
+                std::string output_tif = output_folder + "/page_" + padded + ".tif";
+                std::string render_cmd = "ddjvu -format=tiff -page=" + std::to_string(page) + " '" + filepath + "' '" + output_tif + "' > /dev/null 2>&1";
                 system(render_cmd.c_str());
 
-                if (stat(output_png.c_str(), &st) == 0 && st.st_size > 1000) {
+                if (stat(output_tif.c_str(), &st) == 0 && st.st_size > 1000) {
                     // File valid, keep it. No counter needed.
                 }
                 unlink(iw44_file.c_str());
@@ -708,12 +710,13 @@ void extract_djvu_images(const std::string& filepath, const std::string& output_
                  struct stat st;
                 if (stat(iw44_file.c_str(), &st) == 0 && st.st_size > SIZE_THRESHOLD) {
                     // FIX: Use 'page' for filename
+                    // FIX: ddjvu does not support PNG. Changed to TIFF.
                     std::string page_num = std::to_string(page);
                     std::string padded = std::string(4 - page_num.length(), '0') + page_num;
-                    std::string output_png = output_folder + "/page_" + padded + ".png";
-                    std::string render_cmd = "ddjvu -format=png -page=" + std::to_string(page) + " '" + filepath + "' '" + output_png + "' > /dev/null 2>&1";
+                    std::string output_tif = output_folder + "/page_" + padded + ".tif";
+                    std::string render_cmd = "ddjvu -format=tiff -page=" + std::to_string(page) + " '" + filepath + "' '" + output_tif + "' > /dev/null 2>&1";
                     system(render_cmd.c_str());
-                    if (stat(output_png.c_str(), &st) == 0 && st.st_size > 1000) {
+                    if (stat(output_tif.c_str(), &st) == 0 && st.st_size > 1000) {
                         // File valid.
                     }
                 }
